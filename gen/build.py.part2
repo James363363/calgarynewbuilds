@@ -1,0 +1,193 @@
+<p style="font-size:.85rem;margin:.2em 0">{e(c['developer'])} · {n} product line{'s' if n!=1 else ''}</p>
+<div class="foot">{stakeprice(c['price_from'])}<span><span class="badge q">{c['q4']}</span> {warn}</span></div>
+</div>'''
+
+def build_communities_index():
+    cards = ''.join(comm_card(c) for c in sorted(comms, key=lambda c:(c['q4'], c['name'])))
+    body = f'''{header('communities')}
+<main id="main"><section class="band"><div class="wrap">
+<span class="eyebrow">DIRECTORY</span>
+<h1>All {len(comms)} new communities</h1>
+<p class="lede">Every community in Calgary with new-construction homes actively selling, grouped by quadrant. Communities on Calgary's edge (like Taza Park on Tsuut'ina Nation land) are included and noted.</p>
+<div class="filters" role="group" aria-label="Filter communities">
+<label>Quadrant<select id="fq"><option value="">All quadrants</option><option>NW</option><option>NE</option><option>SW</option><option>SE</option></select></label>
+</div>
+<p class="count-note"><b id="cnt">{len(comms)}</b> COMMUNITIES SHOWN</p>
+<div class="grid" id="cgrid">{cards}</div>
+</div></section></main>
+{footer()}
+<script>
+const fq=document.getElementById('fq'),cards=[...document.querySelectorAll('#cgrid .card')];
+function apply(){{const v=fq.value;let n=0;cards.forEach(c=>{{const s=!v||c.dataset.q===v;c.style.display=s?'':'none';if(s)n++;}});document.getElementById('cnt').textContent=n;}}
+fq.addEventListener('change',apply);
+const u=new URLSearchParams(location.search).get('q');if(u){{fq.value=u;apply();}}
+</script>'''
+    page = head('All new-build communities in Calgary (NW, NE, SW, SE) — Calgary New Builds',
+        f'Browse all {len(comms)} actively selling new-construction communities in Calgary by quadrant, with developers, from-pricing and builder counts.',
+        '/communities/') + body + '</body></html>'
+    open(f'{OUT}/communities/index.html','w').write(page)
+
+# ---------- community detail ----------
+def build_community(c):
+    rows = by_comm.get(c['slug'], [])
+    lrows = sorted([o for o in rows if not o['dead']], key=lambda o:(o['builder'], o['line']))
+    drows = [o for o in rows if o['dead']]
+    builders_here = sorted({o['builder'] for o in lrows})
+    cc = []
+    seen = set()
+    for b in builders_here:
+        for ct in contacts_by.get((b, c['name']), []):
+            key = (ct['builder'], ct['phone'], ct['email'])
+            if key in seen: continue
+            seen.add(key)
+            rowsc = []
+            if ct['phone']: rowsc.append(f'<div class="row">☏ <span class="mono">{e(ct["phone"])}</span></div>')
+            if ct['email']: rowsc.append(f'<div class="row">✉ {e(ct["email"])}</div>')
+            if ct['hours']: rowsc.append(f'<div class="row">{e(ct["hours"])}</div>')
+            if ct['person']: rowsc.append(f'<div class="row">{e(ct["person"])}</div>')
+            cc.append(f'<div class="contact-card"><b>{e(ct["builder"])}</b>{"".join(rowsc)}</div>')
+    qrows = qps_by_comm.get(c['name'], [])
+    qsec = ''
+    if qrows:
+        qtr = ''.join(f'<tr><td><b>{e(q["builder"])}</b></td><td class="mono">{e(q["count"]) or "—"}</td><td>{e(q["range"]) or "—"}</td><td>{e(q["possession"]) or "—"}</td></tr>' for q in qrows)
+        qsec = f'''<section class="band alt"><div class="wrap">
+<span class="eyebrow">MOVE-IN SOONER</span><h2>Quick possessions in {e(c['name'])}</h2>
+<p class="lede">Spec-home snapshot as of July 31, 2026. This inventory changes weekly — treat counts as a signal, not a promise.</p>
+<div class="tbl-wrap"><table><thead><tr><th>Builder</th><th># Listed</th><th>Price range</th><th>Earliest possession</th></tr></thead><tbody>{qtr}</tbody></table></div>
+</div></section>'''
+    dsec = ''
+    if drows:
+        dl = ''.join(f'<li><b>{e(o["builder"])}</b> — {e(o["line"])}: {e(o["notes"][:220])}{"…" if len(o["notes"])>220 else ""}</li>' for o in drows)
+        dsec = f'<details class="closed-out"><summary>{len(drows)} recently closed-out or unverified product line{"s" if len(drows)!=1 else ""} in this community</summary><ul style="font-size:.82rem;color:var(--ink-soft)">{dl}</ul></details>'
+    mapdiv = ''
+    if c['lat']:
+        approx = ' <span class="badge warn">APPROX. PIN</span>' if c['geo_conf']=='low' else ''
+        mapdiv = f'''<section class="band"><div class="wrap"><span class="eyebrow">LOCATION</span><h2>Find it{approx}</h2>
+{f'<p class="lede">{e(c["sales_centre"])}</p>' if c['sales_centre'] else ''}
+<div id="map" style="height:380px"></div></div></section>'''
+    site_link = f'<a href="https://{e(c["website"])}" rel="nofollow noopener" target="_blank">{e(c["website"])}</a>' if c['website'] and c['website'] != '-' else '—'
+    schema = json.dumps({"@context":"https://schema.org","@type":"Place","name":c['name'],
+        "address":{"@type":"PostalAddress","addressLocality":"Calgary","addressRegion":"AB","addressCountry":"CA"},
+        **({"geo":{"@type":"GeoCoordinates","latitude":c['lat'],"longitude":c['lng']}} if c['lat'] else {})})
+    crumbs = json.dumps({"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[
+        {"@type":"ListItem","position":1,"name":"Communities","item":f"{SITE}/communities/"},
+        {"@type":"ListItem","position":2,"name":c['name'],"item":f"{SITE}/communities/{c['slug']}.html"}]})
+    notes = f'<div class="note-box">{e(c["notes"])}</div>' if c['notes'] else ''
+    body = f'''{header('communities')}
+<main id="main">
+<div class="comm-head"><div class="wrap">
+<span class="eyebrow">{c['q4']} CALGARY · {e(c['area'])}</span>
+<h1>{e(c['name'])}</h1>
+<div class="facts">
+<div><span>Developer</span>{e(c['developer']) or '—'}</div>
+<div><span>Status</span>{e(c['status']) or '—'}</div>
+<div><span>Priced from</span>{e(c['price_from']) or 'TBC'}</div>
+<div><span>Builders active</span>{len(builders_here)}</div>
+<div><span>Official site</span>{site_link}</div>
+</div>
+</div></div>
+<div class="wrap crumbs"><a href="/">Home</a> / <a href="/communities/">Communities</a> / {e(c['name'])}</div>
+<section class="band" style="padding-top:12px"><div class="wrap">
+{notes}
+<span class="eyebrow">WHAT YOU CAN BUY HERE</span>
+<h2>{len(lrows)} product line{'s' if len(lrows)!=1 else ''} from {len(builders_here)} builder{'s' if len(builders_here)!=1 else ''}</h2>
+<p><a class="btn ghost" style="font-size:.92rem;padding:7px 16px" href="/homes/?c={c['slug']}">Compare these against the whole city \u2192</a></p>
+{offers_table(lrows) if lrows else '<p class="lede">No verified product lines currently published for this community — check the official site or sales centre.</p>'}
+{dsec}
+</div></section>
+{qsec}
+{mapdiv}
+{f'<section class="band alt"><div class="wrap"><span class="eyebrow">TALK TO SOMEONE</span><h2>Sales centres</h2><div class="contact-grid">{"".join(cc)}</div></div></section>' if cc else ''}
+</main>
+{footer()}'''
+    extra = f'<script type="application/ld+json">{schema}</script><script type="application/ld+json">{crumbs}</script>'
+    if c['lat']: extra += LEAFLET
+    pf = re.sub(r"^[Ff]rom\s*~?\s*", "", c['price_from']) or 'TBC'
+    desc = f"New homes in {c['name']}, {c['q4']} Calgary: {len(lrows)} product lines from {len(builders_here)} builders, priced from {pf}. Developer: {c['developer']}. Prices, features and sales-centre contacts."
+    page = head(f"{c['name']} new homes — builders, prices & quick possessions | Calgary New Builds", desc[:300], f"/communities/{c['slug']}.html", extra) + body
+    if c['lat']:
+        page += f'''<script>const map=L.map('map',{{scrollWheelZoom:false}}).setView([{c['lat']},{c['lng']}],13);
+L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png',{{maxZoom:18,attribution:'&copy; OpenStreetMap contributors'}}).addTo(map);
+L.circleMarker([{c['lat']},{c['lng']}],{{radius:9,weight:2,color:'{ "#E4501E" if c["geo_conf"]=="low" else "#2D5DA8"}',fillColor:'{"transparent" if c["geo_conf"]=="low" else "#2D5DA8"}',fillOpacity:{0 if c["geo_conf"]=="low" else 0.85}{",dashArray:'3,3'" if c["geo_conf"]=="low" else ""}}}).addTo(map);</script>'''
+    page += '</body></html>'
+    open(f"{OUT}/communities/{c['slug']}.html",'w').write(page)
+
+# ---------- homes browser (see homes_page.py) ----------
+from homes_page import build_homes_page
+def build_homes():
+    build_homes_page(OUT, SITE, DATA_DATE, comms, live, head, header, footer, QUADS)
+
+# ---------- builders ----------
+def build_builders():
+    active = {o['builder'] for o in live}
+    bl = []
+    comm_by_builder = {}
+    for o in live: comm_by_builder.setdefault(o['builder'], set()).add((o['community'], o['cslug']))
+    for b in sorted(builders, key=lambda b: b['name']):
+        if b['name'] not in active and not comm_by_builder.get(b['name']): continue
+        cs = sorted(comm_by_builder.get(b['name'], set()))
+        links = ', '.join(f'<a href="/communities/{s}.html">{e(n)}</a>' for n, s in cs[:8]) + (f' + {len(cs)-8} more' if len(cs) > 8 else '')
+        rp = b['realtor'].lower()
+        rbadge = '<span class="badge q">REALTOR PROGRAM</span>' if rp.startswith('yes') else ('<span class="badge">REALTOR: UNPUBLISHED</span>' if 'unpub' in rp else '')
+        site = f'<a href="https://{e(b["website"])}" rel="nofollow noopener" target="_blank">{e(b["website"])}</a>' if b['website'] else ''
+        bl.append(f'''<div class="card"><h3>{e(b['name'])}</h3>
+<span class="meta">{e(b['category'])}</span>
+<p style="font-size:.85rem;margin:.2em 0">{e(b['segments'])}</p>
+<p style="font-size:.82rem;color:var(--ink-soft)">Selling in: {links or '—'}</p>
+<div class="foot"><span class="mono" style="font-size:.72rem">{len(cs)} communit{'ies' if len(cs)!=1 else 'y'}</span><span>{rbadge}</span></div>
+<span style="font-size:.78rem">{site}</span></div>''')
+    body = f'''{header('builders')}
+<main id="main"><section class="band"><div class="wrap">
+<span class="eyebrow">DIRECTORY</span>
+<h1>{len(bl)} builders active in Calgary's new communities</h1>
+<p class="lede">Every builder with a current product line in our inventory, the communities they're selling in, and whether they publish a realtor co-operation program.</p>
+<div class="grid">{''.join(bl)}</div>
+</div></section></main>{footer()}'''
+    page = head('Calgary new-home builders directory — who builds where | Calgary New Builds',
+        'Directory of every builder active in Calgary new-construction communities, with product segments, communities and realtor program status.',
+        '/builders/') + body + '</body></html>'
+    open(f'{OUT}/builders/index.html','w').write(page)
+
+# ---------- about ----------
+def build_about():
+    body = f'''{header('about')}
+<main id="main"><section class="band"><div class="wrap" style="max-width:820px">
+<span class="eyebrow">METHODOLOGY</span>
+<h1>About the data</h1>
+<p class="lede">Calgary New Builds is an independent directory. Nothing here is a listing, an offer to sell, or builder advertising — it's a compiled snapshot of what every builder publishes on their own websites, organized so you can compare the whole city in one place.</p>
+<h2>How it's compiled</h2>
+<p>Community, builder and product-line data was verified directly from builder and developer websites on <b>{e(DATA_DATE)}</b>. Quick-possession (spec home) counts were re-snapshotted July 31, 2026 and change weekly. Where a builder's site runs entirely in a JavaScript app that can't be verified programmatically (e.g. Mattamy, Hopewell), we say so in the listing notes rather than guessing.</p>
+<h2>How to read the numbers</h2>
+<p>A dash (—) means <b>not published or unverified — not "no."</b> Many builders simply don't publish specs for every line. "From" prices are entry pricing for a product line's smallest model; GST treatment varies by builder (some include it, some quote plus GST, many don't say), so every price carries its GST note where one exists. Always confirm current pricing with the builder's sales centre before making decisions.</p>
+<h2>Map accuracy</h2>
+<p>Pins marked "approximate" were placed by cross-street inference rather than a verified sales-centre address, and are drawn differently on the map (dashed orange outline).</p>
+<h2>Independence & trademarks</h2>
+<p>This site is not affiliated with, endorsed by, or acting for any builder, developer or community. Community and builder names are trademarks of their respective owners, used only to identify what they sell. Source links on every row point back to the builder's own page.</p>
+<h2>Corrections</h2>
+<p>Spot something out of date? Builders and buyers can request a correction at <b>[CONTACT EMAIL — set up hello@calgarynewbuilds.ca]</b>.</p>
+</div></section></main>{footer()}'''
+    page = head('About the data — how Calgary New Builds is compiled', 'How the Calgary New Builds directory is compiled, what the prices mean, GST treatment, map accuracy and independence.', '/about.html') + body + '</body></html>'
+    open(f'{OUT}/about.html','w').write(page)
+
+# ---------- sitemap / robots ----------
+def build_meta():
+    urls = ['/', '/communities/', '/homes/', '/builders/', '/about.html'] + [f'/communities/{c["slug"]}.html' for c in comms]
+    sm = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+    for u in urls:
+        sm += f'  <url><loc>{SITE}{u}</loc><lastmod>{TODAY}</lastmod></url>\n'
+    sm += '</urlset>\n'
+    open(f'{OUT}/sitemap.xml','w').write(sm)
+    open(f'{OUT}/robots.txt','w').write(f'User-agent: *\nAllow: /\nSitemap: {SITE}/sitemap.xml\n')
+
+build_index()
+build_communities_index()
+for c in comms: build_community(c)
+build_homes()
+build_builders()
+build_about()
+build_meta()
+from extras import build_search_js, append_css
+build_search_js(OUT, comms, live)
+append_css(OUT)
+n = sum(len(files) for _,_,files in os.walk(OUT))
+print(f'built {n} files')
