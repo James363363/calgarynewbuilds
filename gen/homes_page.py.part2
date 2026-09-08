@@ -1,0 +1,160 @@
+ [...$('tchips').children].forEach(b=>b.onclick=()=>{{toggle(F.t,b.dataset.t);apply();}});
+}}
+function toggle(set,v){{set.has(v)?set.delete(v):set.add(v);}}
+
+function drawCommList(){{
+ const term=$('cq').value.toLowerCase();
+ const groups={{NW:[],NE:[],SW:[],SE:[]}};
+ Object.entries(CM).forEach(([s,m])=>{{
+  if(F.q.size&&!F.q.has(m.q))return;
+  if(term&&!(m.n+' '+m.a).toLowerCase().includes(term))return;
+  groups[m.q].push([s,m]);}});
+ $('clist').innerHTML=QUADS.map(q=>{{
+  if(!groups[q].length)return '';
+  return `<div class="pop-group">${{q}}</div>`+groups[q].sort((a,b)=>a[1].n.localeCompare(b[1].n)).map(([s,m])=>{{
+   const n=D.filter(d=>d.cs===s&&matches(d,'c')).length;
+   return `<label class="pop-item"><input type="checkbox" data-cs="${{s}}"${{F.c.has(s)?' checked':''}}> ${{esc(m.n)}} <span class="pop-count">${{n}}</span></label>`;}}).join('');
+ }}).join('')||'<div class="pop-empty">No communities match.</div>';
+ [...$('clist').querySelectorAll('input')].forEach(i=>i.onchange=()=>{{toggle(F.c,i.dataset.cs);apply();}});
+ $('cpn').textContent=F.c.size?F.c.size:'';
+}}
+function drawBuilderList(){{
+ const term=$('bq').value.toLowerCase();
+ const bs=[...new Set(D.map(d=>d.b))].sort();
+ $('blist').innerHTML=bs.filter(b=>!term||b.toLowerCase().includes(term)).map(b=>{{
+  const n=D.filter(d=>d.b===b&&matches(d,'b')).length;
+  return `<label class="pop-item"><input type="checkbox" data-b="${{esc(b)}}"${{F.b.has(b)?' checked':''}}> ${{esc(b)}} <span class="pop-count">${{n}}</span></label>`;}}).join('')||'<div class="pop-empty">No builders match.</div>';
+ [...$('blist').querySelectorAll('input')].forEach(i=>i.onchange=()=>{{toggle(F.b,i.dataset.b);apply();}});
+ $('bpn').textContent=F.b.size?F.b.size:'';
+}}
+
+function drawSlider(){{
+ $('rmin').value=F.min;$('rmax').value=F.max;
+ $('rvmin').textContent=fmt$(F.min);
+ $('rvmax').textContent=F.max>=PMAX?fmt$(PMAX)+'+':fmt$(F.max);
+ const lo=(F.min-PMIN)/(PMAX-PMIN)*100, hi=(F.max-PMIN)/(PMAX-PMIN)*100;
+ $('rfill').style.left=lo+'%';$('rfill').style.width=(hi-lo)+'%';
+}}
+
+function drawActive(){{
+ const chips=[];
+ F.q.forEach(v=>chips.push(['q',v,v]));
+ F.c.forEach(v=>chips.push(['c',v,CM[v]?CM[v].n:v]));
+ F.t.forEach(v=>chips.push(['t',v,v]));
+ F.b.forEach(v=>chips.push(['b',v,v]));
+ if(priceActive())chips.push(['p','',fmt$(F.min)+'\u2013'+(F.max>=PMAX?fmt$(PMAX)+'+':fmt$(F.max))]);
+ [['su','Legal suite'],['mg','Multi-gen'],['wo','Walkout'],['nz','Solar'],['qp','Quick possession']].forEach(([k,l])=>{{if(F[k])chips.push([k,'',l]);}});
+ if(F.s)chips.push(['s','','\u201c'+F.s+'\u201d']);
+ $('abar').hidden=!chips.length;
+ $('achips').innerHTML=chips.map(([k,v,l],i)=>`<button class="achip" data-k="${{k}}" data-v="${{esc(v)}}">${{esc(l)}} \u00d7</button>`).join('');
+ [...$('achips').children].forEach(b=>b.onclick=()=>{{
+  const k=b.dataset.k,v=b.dataset.v;
+  if(k==='p'){{F.min=PMIN;F.max=PMAX;F.inctbc=0;}}
+  else if(k==='s'){{F.s='';$('bs').value='';}}
+  else if(['su','mg','wo','nz','qp'].includes(k)){{F[k]=0;$('f'+k).checked=false;}}
+  else F[k].delete(v);
+  apply();}});
+}}
+
+// ---------- results ----------
+function offerRow(d,withComm){{
+ const feats=[];if(d.su)feats.push('<span class="yes">Suite</span>');if(d.mg)feats.push('<span class="yes">Multi-gen</span>');
+ if(d.wo)feats.push('<span class="yes">Walkout</span>');if(d.nz)feats.push('<span class="yes">Solar</span>');if(d.qp)feats.push('<span class="yes">QP</span>');
+ return `<tr>${{withComm?`<td data-l="Community"><a href="/communities/${{d.cs}}.html">${{esc(d.c)}}</a><span class="sub">${{d.q}}</span></td>`:''}}
+<td data-l="Builder / line"><b>${{esc(d.b)}}</b><span class="sub">${{esc(d.l)}}</span></td>
+<td data-l="Price from">${{d.p?`<span class="stake">${{esc(d.p)}}</span>`:'<span class="stake tbc">TBC</span>'}}${{d.g?`<span class="sub">${{esc(d.g)}}</span>`:''}}</td>
+<td data-l="Size \u00b7 Bed/Bath" class="mono">${{esc(d.sz||'\u2014')}}<span class="sub">${{esc([d.bd,d.ba].filter(Boolean).join(' / ')||'\u2014')}} bed/bath</span></td>
+<td data-l="Garage">${{esc(d.ga||'\u2014')}}</td>
+<td data-l="Features" class="flagcell">${{feats.length?feats.join(' \u00b7 '):'<span class="dim">\u2014</span>'}}</td>
+<td data-l="Source">${{d.src?`<a href="${{esc(d.src)}}" rel="nofollow noopener" target="_blank">builder site</a>`:'\u2014'}}</td></tr>`;
+}}
+function sortOffers(r){{
+ if(F.sort==='pa')r.sort((a,b)=>(a.pn||9e9)-(b.pn||9e9));
+ else if(F.sort==='pd')r.sort((a,b)=>(b.pn||0)-(a.pn||0));
+ else r.sort((a,b)=>a.b.localeCompare(b.b)||a.l.localeCompare(b.l));
+ return r;
+}}
+function render(){{
+ const r=D.filter(d=>matches(d));
+ $('cnt').textContent=r.length;
+ // hidden-TBC note
+ let note='';
+ if(priceActive()&&!F.inctbc){{
+  const hid=D.filter(d=>d.pn==null&&matches({{...d,pn:F.min}}));
+  if(hid.length)note=` \u00b7 <button class="linkbtn" id="showtbc">+${{hid.length}} unpriced (TBC) hidden \u2014 show</button>`;
+ }} else if(priceActive()&&F.inctbc){{
+  note=' \u00b7 <button class="linkbtn" id="showtbc">hide unpriced</button>';
+ }}
+ $('tbcnote').innerHTML=note;
+ const tb=$('tbcnote').querySelector('#showtbc');
+ if(tb)tb.onclick=()=>{{F.inctbc=F.inctbc?0:1;apply();}};
+
+ if(F.view==='f'){{
+  $('gcnt').textContent='';
+  $('results').innerHTML=`<div class="tbl-wrap"><table>
+<thead><tr><th>Community</th><th>Builder / product line</th><th>Price from</th><th>Size \u00b7 Bed/Bath</th><th>Garage</th><th>Features</th><th>Source</th></tr></thead>
+<tbody>${{sortOffers([...r]).map(d=>offerRow(d,true)).join('')}}</tbody></table></div>`;
+  return;
+ }}
+ // grouped
+ const groups=new Map();
+ r.forEach(d=>{{if(!groups.has(d.cs))groups.set(d.cs,[]);groups.get(d.cs).push(d);}});
+ let order=[...groups.keys()];
+ if(F.sort==='pa')order.sort((a,b)=>Math.min(...groups.get(a).map(d=>d.pn||9e9))-Math.min(...groups.get(b).map(d=>d.pn||9e9)));
+ else if(F.sort==='pd')order.sort((a,b)=>Math.max(...groups.get(b).map(d=>d.pn||0))-Math.max(...groups.get(a).map(d=>d.pn||0)));
+ else order.sort((a,b)=>(CM[a]?CM[a].n:a).localeCompare(CM[b]?CM[b].n:b));
+ $('gcnt').textContent='IN '+order.length+' COMMUNIT'+(order.length===1?'Y':'IES');
+ $('results').innerHTML=order.map(cs=>{{
+  const m=CM[cs]||{{n:cs,q:'',a:'',pf:''}};
+  const rows=sortOffers([...groups.get(cs)]);
+  return `<div class="cgroup">
+<div class="cgroup-head"><div><a class="cgroup-name" href="/communities/${{cs}}.html">${{esc(m.n)}}</a>
+<span class="cgroup-meta">${{m.q}} \u00b7 ${{esc(m.a)}} \u00b7 ${{rows.length}} line${{rows.length!==1?'s':''}}</span></div>
+<span class="stake${{m.pf==='TBC'?' tbc':''}}">${{esc(m.pf)}}</span></div>
+<div class="tbl-wrap"><table>
+<thead><tr><th>Builder / product line</th><th>Price from</th><th>Size \u00b7 Bed/Bath</th><th>Garage</th><th>Features</th><th>Source</th></tr></thead>
+<tbody>${{rows.map(d=>offerRow(d,false)).join('')}}</tbody></table></div></div>`;
+ }}).join('')||'<p class="lede" style="padding:24px 0">Nothing matches those filters. Loosen one \u2014 or <button class="linkbtn" onclick="document.getElementById(\\'aclear\\').click()">clear all</button>.</p>';
+}}
+
+function apply(){{drawChips();drawCommList();drawBuilderList();drawSlider();drawActive();render();writeURL();}}
+
+// ---------- wiring ----------
+readURL();
+$('bs').value=F.s;
+['su','mg','wo','nz','qp'].forEach(k=>{{$('f'+k).checked=!!F[k];$('f'+k).onchange=()=>{{F[k]=$('f'+k).checked?1:0;apply();}};}});
+$('fsort').value=F.sort;$('fsort').onchange=()=>{{F.sort=$('fsort').value;apply();}};
+function setView(v){{F.view=v;$('vg').classList.toggle('on',v==='g');$('vf').classList.toggle('on',v==='f');apply();}}
+$('vg').onclick=()=>setView('g');$('vf').onclick=()=>setView('f');
+if(F.view==='f'){{$('vg').classList.remove('on');$('vf').classList.add('on');}}
+let st;$('bs').addEventListener('input',()=>{{clearTimeout(st);st=setTimeout(()=>{{F.s=$('bs').value.trim();apply();}},180);}});
+$('cq').addEventListener('input',drawCommList);
+$('bq').addEventListener('input',drawBuilderList);
+$('cclear').onclick=()=>{{F.c.clear();apply();}};
+$('bclear').onclick=()=>{{F.b.clear();apply();}};
+function slide(){{
+ let a=+$('rmin').value,b=+$('rmax').value;
+ if(a>b)[a,b]=[b,a];
+ F.min=a;F.max=b;drawSlider();
+}}
+$('rmin').addEventListener('input',slide);$('rmax').addEventListener('input',slide);
+$('rmin').addEventListener('change',apply);$('rmax').addEventListener('change',apply);
+$('aclear').onclick=()=>{{F.q.clear();F.c.clear();F.t.clear();F.b.clear();F.min=PMIN;F.max=PMAX;
+ F.su=F.mg=F.wo=F.nz=F.qp=F.inctbc=0;F.s='';$('bs').value='';
+ ['su','mg','wo','nz','qp'].forEach(k=>$('f'+k).checked=false);apply();}};
+document.querySelectorAll('.preset').forEach(p=>p.onclick=()=>{{
+ const k=p.dataset.p;
+ if(k==='u500'){{F.min=PMIN;F.max=500000;}}
+ else if(k==='suite'){{F.su=1;$('fsu').checked=true;}}
+ else if(k==='qp'){{F.qp=1;$('fqp').checked=true;}}
+ else if(k==='ct'){{F.t.add('Condos');F.t.add('Townhomes');}}
+ apply();}});
+document.addEventListener('click',e=>{{
+ document.querySelectorAll('details.picker[open]').forEach(d=>{{if(!d.contains(e.target))d.removeAttribute('open');}});
+}});
+apply();
+</script>'''
+    page = head(f'Browse {len(data)} new homes for sale in Calgary — search & filter by community, price, type | Calgary New Builds',
+        f'Search and filter all {len(data)} current new-construction product lines across {len(comms)} Calgary communities — by quadrant, community, builder, price range, home type, legal suite, walkout, solar and quick possession.',
+        '/homes/') + body + '</body></html>'
+    open(f'{OUT}/homes/index.html', 'w').write(page)
