@@ -1,0 +1,5 @@
+site/
+__pycache__/
+data/source.json.gz.b64
+gen/build.py
+gen/homes_page.py
