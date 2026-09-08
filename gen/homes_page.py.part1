@@ -1,0 +1,162 @@
+# -*- coding: utf-8 -*-
+import json, html, re
+
+e = lambda s: html.escape(str(s), quote=True)
+
+def build_homes_page(OUT, SITE, DATA_DATE, comms, live, head, header, footer, QUADS):
+    data = [{'c': o['community'], 'cs': o['cslug'],
+             'q': next((k for k in QUADS if k in o['quadrant'].upper()), 'SE'),
+             'b': o['builder'], 'l': o['line'], 't': o['bucket'], 'p': o['price'], 'pn': o['price_n'],
+             'g': o['gst'], 'sz': o['size'], 'bd': o['beds'], 'ba': o['baths'], 'ga': o['garage'],
+             'su': o['suite'].lower() == 'yes', 'mg': o['multigen'].lower() == 'yes',
+             'wo': o['walkout'].lower() == 'yes', 'nz': o['netzero'].lower() == 'yes',
+             'qp': o['qp'].lower() == 'yes',
+             'src': o['source'] if o['source'].startswith('http') else ''} for o in live]
+    json.dump(data, open(f'{OUT}/data/inventory.json', 'w'))
+
+    cmeta = {c['slug']: {'n': c['name'], 'q': c['q4'], 'a': c['area'], 'pf': c['price_from'] or 'TBC'} for c in comms}
+    buckets = ['Condos', 'Townhomes', 'Duplex / Paired', 'Laned', 'Front-Drive', 'Single Family', 'Bungalow', 'Estate', 'Other']
+    buckets = [b for b in buckets if any(d['t'] == b for d in data)]
+    prices = [d['pn'] for d in data if d['pn']]
+    PMIN, PMAX = 200000, 1750000  # slider bounds; top means "no max"
+
+    body = f'''{header('homes')}
+<main id="main"><section class="band"><div class="wrap">
+<span class="eyebrow">CITY-WIDE INVENTORY</span>
+<h1>Browse all {len(data)} new-home product lines</h1>
+<p class="lede">Every current builder offering across all {len(comms)} communities, grouped by community. "From" prices are entry pricing as published by each builder ({e(DATA_DATE)}) — GST treatment varies, so check the note under each price.</p>
+
+<div class="browse-search">
+<input id="bs" type="search" placeholder="Search a community, area, builder or product line — e.g. \u201cSeton\u201d, \u201cJayman\u201d, \u201cduplex\u201d" aria-label="Search homes" autocomplete="off">
+</div>
+
+<div class="presets" role="group" aria-label="Quick filters">
+<span class="presets-label">QUICK:</span>
+<button class="preset" data-p="u500">Under $500k</button>
+<button class="preset" data-p="suite">Legal suite</button>
+<button class="preset" data-p="qp">Quick possession</button>
+<button class="preset" data-p="ct">Condos &amp; towns</button>
+</div>
+
+<div class="facets">
+  <div class="facet">
+    <span class="facet-label" id="lab-q">Quadrant</span>
+    <div class="chips" role="group" aria-labelledby="lab-q" id="qchips"></div>
+  </div>
+  <div class="facet">
+    <span class="facet-label" id="lab-t">Home type</span>
+    <div class="chips" role="group" aria-labelledby="lab-t" id="tchips"></div>
+  </div>
+  <details class="picker" id="cpick">
+    <summary>Communities <b class="pick-n" id="cpn"></b></summary>
+    <div class="pop"><input type="search" id="cq" placeholder="Find a community\u2026" aria-label="Find a community"><div class="pop-list" id="clist"></div>
+    <button class="pop-clear" id="cclear" type="button">Clear communities</button></div>
+  </details>
+  <details class="picker" id="bpick">
+    <summary>Builders <b class="pick-n" id="bpn"></b></summary>
+    <div class="pop"><input type="search" id="bq" placeholder="Find a builder\u2026" aria-label="Find a builder"><div class="pop-list" id="blist"></div>
+    <button class="pop-clear" id="bclear" type="button">Clear builders</button></div>
+  </details>
+  <div class="facet facet-price">
+    <span class="facet-label">Price range <span class="mono price-vals"><span id="rvmin"></span>\u2009\u2013\u2009<span id="rvmax"></span></span></span>
+    <div class="range" id="rangebox">
+      <div class="range-rail"></div><div class="range-fill" id="rfill"></div>
+      <input type="range" id="rmin" min="{PMIN}" max="{PMAX}" step="25000" value="{PMIN}" aria-label="Minimum price">
+      <input type="range" id="rmax" min="{PMIN}" max="{PMAX}" step="25000" value="{PMAX}" aria-label="Maximum price">
+    </div>
+  </div>
+  <div class="facet">
+    <span class="facet-label" id="lab-f">Features</span>
+    <div class="flags" role="group" aria-labelledby="lab-f">
+      <label><input type="checkbox" id="fsu">Legal suite</label>
+      <label><input type="checkbox" id="fmg">Multi-gen</label>
+      <label><input type="checkbox" id="fwo">Walkout</label>
+      <label><input type="checkbox" id="fnz">Solar / net-zero</label>
+      <label><input type="checkbox" id="fqp">Quick possession</label>
+    </div>
+  </div>
+  <div class="facet">
+    <span class="facet-label" for="fsort">Sort &amp; view</span>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <select id="fsort" aria-label="Sort">
+      <option value="az">Community A\u2013Z</option>
+      <option value="pa">Cheapest first</option>
+      <option value="pd">Priciest first</option>
+    </select>
+    <div class="viewtog" role="group" aria-label="Layout">
+      <button id="vg" class="on" type="button">Grouped</button><button id="vf" type="button">Flat</button>
+    </div></div>
+  </div>
+</div>
+
+<div class="active-bar" id="abar" hidden><span class="mono" style="font-size:.66rem;letter-spacing:.12em">FILTERS:</span><span id="achips"></span><button id="aclear" type="button">Clear all</button></div>
+
+<p class="count-note"><b id="cnt"></b> PRODUCT LINES <span id="gcnt"></span> \u00b7 PRICES AS PUBLISHED {e(DATA_DATE)} <span id="tbcnote"></span></p>
+<noscript><p class="note-box">This browser view needs JavaScript. Every offering is also listed on its <a href="/communities/">community page</a>.</p></noscript>
+<div id="results"></div>
+</div></section></main>
+{footer()}
+<script>
+const D={json.dumps(data)};
+const CM={json.dumps(cmeta)};
+const QUADS=['NW','NE','SW','SE'];
+const TYPES={json.dumps(buckets)};
+const PMIN={PMIN},PMAX={PMAX};
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}}[c]));
+const fmt$=v=>v>=1000000?('$'+(v/1000000).toFixed(2).replace(/\\.?0+$/,'')+'M'):('$'+Math.round(v/1000)+'k');
+
+// ---------- state ----------
+const F={{q:new Set(),c:new Set(),t:new Set(),b:new Set(),min:PMIN,max:PMAX,su:0,mg:0,wo:0,nz:0,qp:0,inctbc:0,s:'',sort:'az',view:'g'}};
+function priceActive(){{return F.min>PMIN||F.max<PMAX;}}
+
+function readURL(){{
+ const u=new URLSearchParams(location.search);
+ const sets=[['q','q'],['c','c'],['t','t'],['b','b']];
+ sets.forEach(([k,f])=>{{const v=u.get(k);if(v)v.split(',').forEach(x=>F[f].add(decodeURIComponent(x)));}});
+ if(u.get('min'))F.min=Math.max(PMIN,+u.get('min'));
+ if(u.get('max'))F.max=Math.min(PMAX,+u.get('max'));
+ ['su','mg','wo','nz','qp','inctbc'].forEach(k=>{{if(u.get(k)==='1')F[k]=1;}});
+ if(u.get('s'))F.s=u.get('s');
+ if(u.get('sort'))F.sort=u.get('sort');
+ if(u.get('view')==='f')F.view='f';
+}}
+function writeURL(){{
+ const u=new URLSearchParams();
+ [['q','q'],['c','c'],['t','t'],['b','b']].forEach(([k,f])=>{{if(F[f].size)u.set(k,[...F[f]].map(encodeURIComponent).join(','));}});
+ if(F.min>PMIN)u.set('min',F.min); if(F.max<PMAX)u.set('max',F.max);
+ ['su','mg','wo','nz','qp','inctbc'].forEach(k=>{{if(F[k])u.set(k,'1');}});
+ if(F.s)u.set('s',F.s); if(F.sort!=='az')u.set('sort',F.sort); if(F.view==='f')u.set('view','f');
+ const qs=u.toString();
+ history.replaceState(null,'',qs?('?'+qs):location.pathname);
+}}
+
+// ---------- matching ----------
+function matches(d,skip){{
+ if(skip!=='q'&&F.q.size&&!F.q.has(d.q))return false;
+ if(skip!=='c'&&F.c.size&&!F.c.has(d.cs))return false;
+ if(skip!=='t'&&F.t.size&&!F.t.has(d.t))return false;
+ if(skip!=='b'&&F.b.size&&!F.b.has(d.b))return false;
+ if(skip!=='p'&&priceActive()){{
+   if(d.pn==null){{if(!F.inctbc)return false;}}
+   else if(d.pn<F.min||(F.max<PMAX&&d.pn>F.max))return false;
+ }}
+ if(F.su&&!d.su)return false; if(F.mg&&!d.mg)return false; if(F.wo&&!d.wo)return false;
+ if(F.nz&&!d.nz)return false; if(F.qp&&!d.qp)return false;
+ if(F.s){{
+   const s=F.s.toLowerCase();
+   const hay=(d.c+' '+(CM[d.cs]?CM[d.cs].a:'')+' '+d.b+' '+d.l+' '+d.t+' '+d.q).toLowerCase();
+   if(!hay.includes(s))return false;
+ }}
+ return true;
+}}
+
+// ---------- facet UI ----------
+function drawChips(){{
+ $('qchips').innerHTML=QUADS.map(q=>{{
+  const n=D.filter(d=>d.q===q&&matches(d,'q')).length;
+  return `<button class="chip${{F.q.has(q)?' on':''}}${{n?'':' zero'}}" data-q="${{q}}" aria-pressed="${{F.q.has(q)}}">${{q}} <b>${{n}}</b></button>`;}}).join('');
+ $('tchips').innerHTML=TYPES.map(t=>{{
+  const n=D.filter(d=>d.t===t&&matches(d,'t')).length;
+  return `<button class="chip${{F.t.has(t)?' on':''}}${{n?'':' zero'}}" data-t="${{t}}" aria-pressed="${{F.t.has(t)}}">${{esc(t)}} <b>${{n}}</b></button>`;}}).join('');
+ [...$('qchips').children].forEach(b=>b.onclick=()=>{{toggle(F.q,b.dataset.q);apply();}});
