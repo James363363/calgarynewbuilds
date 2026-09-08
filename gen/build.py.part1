@@ -1,0 +1,194 @@
+# -*- coding: utf-8 -*-
+import json, html, os, re, shutil
+from data import load, SITE
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+OUT = os.path.normpath(os.path.join(HERE, '..', 'site'))
+TODAY = '2026-08-20'
+DATA_DATE = 'July 30–31, 2026'
+
+for d in ('', 'communities', 'homes', 'builders', 'data', 'assets'):
+    os.makedirs(os.path.join(OUT, d), exist_ok=True)
+shutil.copyfile(os.path.join(HERE, 'assets', 'site.css'), os.path.join(OUT, 'assets', 'site.css'))
+
+comms, offers, contacts, qps, builders = load()
+live = [o for o in offers if not o['dead']]
+dead = [o for o in offers if o['dead']]
+by_comm = {}
+for o in offers: by_comm.setdefault(o['cslug'], []).append(o)
+contacts_by = {}
+for c in contacts: contacts_by.setdefault((c['builder'], c['community']), []).append(c)
+qps_by_comm = {}
+for q in qps: qps_by_comm.setdefault(q['community'], []).append(q)
+QUADS = ['NW', 'NE', 'SW', 'SE']
+def quad_of(c):
+    q = c['quadrant'].upper()
+    for k in QUADS:
+        if k in q: return k
+    if q.startswith('N'): return 'NW'
+    if q.startswith('W'): return 'SW'
+    return 'SE'
+for c in comms: c['q4'] = quad_of(c)
+
+e = lambda s: html.escape(str(s), quote=True)
+
+def head(title, desc, path, extra=''):
+    return f'''<!doctype html>
+<html lang="en-CA">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{e(title)}</title>
+<meta name="description" content="{e(desc)}">
+<link rel="canonical" href="{SITE}{path}">
+<meta property="og:title" content="{e(title)}">
+<meta property="og:description" content="{e(desc)}">
+<meta property="og:type" content="website">
+<meta property="og:url" content="{SITE}{path}">
+<meta property="og:site_name" content="Calgary New Builds">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;600&family=Public+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/site.css">
+{extra}
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+'''
+
+def header(active=''):
+    def a(href, label, key):
+        cur = ' aria-current="page"' if key == active else ''
+        return f'<a href="{href}"{cur}>{label}</a>'
+    return f'''<header class="site"><div class="wrap">
+<a class="brand" href="/">Calgary New Builds<small>Every new community · Every builder · One map</small></a>
+<nav class="main" aria-label="Main">
+{a('/','Home','home')}{a('/communities/','Communities','communities')}{a('/homes/','Browse homes','homes')}{a('/builders/','Builders','builders')}{a('/about.html','About the data','about')}
+</nav>
+<div class="hsearch"><input id="hs" type="search" placeholder="Search community or builder\u2026" autocomplete="off" aria-label="Search communities and builders" aria-expanded="false" role="combobox" aria-controls="hsr"><div id="hsr" class="hsr" role="listbox" hidden></div></div>
+</div></header>
+<script src="/assets/search.js" defer></script>
+'''
+
+def footer():
+    return f'''<footer class="site"><div class="wrap">
+<div class="cols">
+<div><span class="brand" style="font-size:1.2rem">Calgary New Builds</span>
+<p>An independent directory of every actively selling new-construction community in Calgary — {len(comms)} communities, {len({o["builder"] for o in live})} builders, {len(live)} current product lines, on one map.</p></div>
+<div><b>Explore</b><br><a href="/communities/">All communities</a><br><a href="/homes/">Browse homes</a><br><a href="/builders/">Builder directory</a></div>
+<div><b>Quadrants</b><br><a href="/communities/?q=NW">Northwest</a><br><a href="/communities/?q=NE">Northeast</a><br><a href="/communities/?q=SW">Southwest</a><br><a href="/communities/?q=SE">Southeast</a></div>
+</div>
+<div class="fineprint">PRICES, INVENTORY AND AVAILABILITY VERIFIED FROM BUILDER AND DEVELOPER WEBSITES AS OF {e(DATA_DATE)} AND CHANGE WITHOUT NOTICE. "FROM" PRICING MAY EXCLUDE GST, LOT PREMIUMS AND UPGRADES — SEE EACH LISTING'S GST NOTE AND CONFIRM WITH THE BUILDER'S SALES CENTRE. CALGARYNEWBUILDS.CA IS NOT AFFILIATED WITH ANY BUILDER OR DEVELOPER; COMMUNITY AND BUILDER NAMES ARE TRADEMARKS OF THEIR RESPECTIVE OWNERS AND ARE USED FOR IDENTIFICATION ONLY. MAP PINS MARKED "APPROXIMATE" ARE PLACED BY CROSS-STREET INFERENCE. © 2026 CALGARY NEW BUILDS.</div>
+</div></footer>'''
+
+def stakeprice(p):
+    if not p: return '<span class="stake tbc">TBC</span>'
+    return f'<span class="stake">{e(p)}</span>'
+
+def flag(v, label):
+    if v.lower() == 'yes': return f'<span class="yes">{label}</span>'
+    return ''
+
+def offer_flags(o):
+    parts = [flag(o['suite'],'Suite'), flag(o['multigen'],'Multi-gen'), flag(o['walkout'],'Walkout'), flag(o['netzero'],'Solar'), flag(o['qp'],'QP')]
+    parts = [p for p in parts if p]
+    return ' · '.join(parts) if parts else '<span class="dim">—</span>'
+
+def offers_table(rows, show_comm=False):
+    trs = []
+    for o in rows:
+        comm_td = f'<td><a href="/communities/{o["cslug"]}.html">{e(o["community"])}</a><span class="sub">{e(o["quadrant"])}</span></td>' if show_comm else ''
+        size = e(o['size']) if o['size'] else '—'
+        bb = ' / '.join(x for x in [o['beds'], o['baths']] if x) or '—'
+        src = f'<a href="{e(o["source"])}" rel="nofollow noopener" target="_blank">builder site</a>' if o['source'].startswith('http') else '—'
+        gst = f'<span class="sub">{e(o["gst"])}</span>' if o['gst'] else ''
+        trs.append(f'''<tr>{comm_td}<td><b>{e(o["builder"])}</b><span class="sub">{e(o["line"])}</span></td>
+<td>{stakeprice(o["price"])}{gst}</td><td class="mono">{size}<span class="sub">{e(bb)} bed/bath</span></td>
+<td>{e(o["garage"]) or "—"}</td><td class="flagcell">{offer_flags(o)}</td><td>{src}</td></tr>''')
+    ch = '<th>Community</th>' if show_comm else ''
+    return f'''<div class="tbl-wrap"><table>
+<thead><tr>{ch}<th>Builder / product line</th><th>Price from</th><th>Size · Bed/Bath</th><th>Garage</th><th>Features</th><th>Source</th></tr></thead>
+<tbody>{''.join(trs)}</tbody></table></div>'''
+
+# ---------- map data ----------
+map_pts = [{'name': c['name'], 'slug': c['slug'], 'lat': c['lat'], 'lng': c['lng'],
+            'q': c['q4'], 'price': c['price_from'] or 'TBC', 'status': c['status'],
+            'approx': c['geo_conf'] == 'low'} for c in comms if c['lat']]
+
+MAP_JS = '''<script>
+const pts = %s;
+const map = L.map('map',{scrollWheelZoom:false}).setView([51.03,-114.06],10);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:18,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
+pts.forEach(p=>{
+  const m = L.circleMarker([p.lat,p.lng],{radius:7,weight:2,
+    color:p.approx?'#E4501E':'#2D5DA8', fillColor:p.approx?'transparent':'#2D5DA8',
+    fillOpacity:p.approx?0:0.85, dashArray:p.approx?'3,3':null}).addTo(map);
+  m.bindPopup(`<b style="font-family:'Barlow Condensed';font-size:1.05rem;text-transform:uppercase">${p.name}</b><br>
+  <span style="font-family:'IBM Plex Mono';font-size:.72rem">${p.q} \u00b7 ${p.price}${p.approx?' \u00b7 approx. location':''}</span><br>
+  <a href="/communities/${p.slug}.html">View community \u2192</a>`);
+});
+</script>'''
+
+LEAFLET = '''<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>'''
+
+# ---------- index ----------
+def build_index():
+    qcounts = {q: sum(1 for c in comms if c['q4'] == q) for q in QUADS}
+    min_price = min(o['price_n'] for o in live if o['price_n'])
+    schema = json.dumps({
+        "@context": "https://schema.org", "@type": "WebSite",
+        "name": "Calgary New Builds", "url": SITE,
+        "description": f"Independent directory of all {len(comms)} actively selling new-construction communities in Calgary, Alberta."})
+    plat = ''.join(
+        f'<a href="/communities/?q={q}"><span class="q">{q}</span><span class="n"><b>{qcounts[q]}</b> COMMUNITIES</span></a>'
+        for q in ['NW','NE','SW','SE'])
+    body = f'''{header('home')}
+<main id="main">
+<div class="hero"><div class="wrap">
+<div>
+<span class="eyebrow">CALGARY · AB · SURVEYED {e(DATA_DATE)}</span>
+<h1>Every new-build community in Calgary. One map.</h1>
+<p class="lede">{len(comms)} actively selling communities, {len({o["builder"] for o in live})} builders and {len(live)} current product lines — from ${min_price//1000}k condos to estate homes — compiled from every builder's own published pricing, so you can compare the whole city before you talk to a single sales centre.</p>
+<div class="cta-row"><a class="btn primary" href="/homes/">Browse all homes</a><a class="btn ghost" href="/communities/">See communities</a></div>
+<div class="statline">
+<div><b>{len(comms)}</b><span>Communities</span></div>
+<div><b>{len({o["builder"] for o in live})}</b><span>Builders</span></div>
+<div><b>{len(live)}</b><span>Product lines</span></div>
+<div><b>4</b><span>Quadrants</span></div>
+</div>
+</div>
+<div><div class="plat" role="navigation" aria-label="Browse by quadrant">{plat}</div>
+<p class="plat-cap">PLAT OF CALGARY · SELECT A QUADRANT</p></div>
+</div></div>
+
+<section class="band alt"><div class="wrap">
+<span class="eyebrow">THE MAP</span>
+<h2>Where the city is growing</h2>
+<div id="map" aria-label="Map of Calgary new-build communities"></div>
+<div class="map-legend"><span><span class="dot"></span>VERIFIED LOCATION</span><span><span class="dot approx"></span>APPROXIMATE (CROSS-STREET INFERENCE)</span></div>
+</div></section>
+
+<section class="band"><div class="wrap">
+<span class="eyebrow">HOW TO USE THIS SITE</span>
+<h2>Three ways in</h2>
+<div class="grid">
+<div class="card"><h3><a href="/communities/">Start with a place</a></h3><p>Pick a quadrant or community and see every builder active there, side by side — laned, front-drive, duplex, townhome and condo lines with published from-pricing.</p></div>
+<div class="card"><h3><a href="/homes/">Start with a home</a></h3><p>Filter all {len(live)} product lines by price, product type, legal-suite option, walkout lots, solar and quick-possession availability across the whole city at once.</p></div>
+<div class="card"><h3><a href="/builders/">Start with a builder</a></h3><p>See which communities each of Calgary's {len({o["builder"] for o in live})} active builders is selling in, and which publish a realtor co-op program.</p></div>
+</div>
+</div></section>
+</main>
+{footer()}'''
+    page = head('Calgary New Builds — every new-construction community in Calgary on one map',
+        f'Independent directory of all {len(comms)} actively selling new-build communities in Calgary: {len(live)} builder product lines with prices, features and sales-centre info, updated from builder websites.',
+        '/', LEAFLET + f'<script type="application/ld+json">{schema}</script>') + body + (MAP_JS % json.dumps(map_pts)) + '</body></html>'
+    open(f'{OUT}/index.html','w').write(page)
+
+# ---------- communities index ----------
+def comm_card(c):
+    n = len([o for o in by_comm.get(c['slug'],[]) if not o['dead']])
+    warn = '<span class="badge warn">FINAL PHASES</span>' if re.search(r'final|last|wrapping|closing', c['status'], re.I) else ''
+    return f'''<div class="card" data-q="{c['q4']}">
+<h3><a href="/communities/{c['slug']}.html">{e(c['name'])}</a></h3>
+<span class="meta">{e(c['area'])}</span>
